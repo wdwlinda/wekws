@@ -34,6 +34,8 @@ __pycache__/
 dict
 exp
 data
+data*
 raw_wav
 tensorboard
 **/*build*
+**/wandb

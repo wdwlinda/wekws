@@ -23,8 +23,31 @@ import torch
 import torch.distributed as dist
 import torch.optim as optim
 import yaml
-from tensorboardX import SummaryWriter
+# from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
+
+import wandb
+wandb.login(key='4ec0396ddf4a239b6fcb4daa9e15710b5cf963cd')
+# [optional] finish the wandb run, necessary in notebooks
+# start a new wandb run to track this script
+# wandb.init(
+#         # set the wandb project where this run will be logged
+#         project="wekws-project",
+#         config = {
+#         'num_workers': 2,
+#         'batch_size': 48,
+#         'input_size': 64,
+#         'num_epochs': 1,
+#         'learning_rate': 0.0008,   # originally 0.001
+#         'weight_decay': 1e-4,      # originally 1e-4
+#         'augment': False,
+#         'load_pretrained': True,
+#         'lr_scheduler_step_size': 30, 
+#         'lr_scheduler_gamma': 0.1,
+#         'train_mode': 'Quant', # "float" "floatClamp" "Quant" 
+#         }
+#     )
+# wandb = None
 
 from wekws.dataset.dataset import Dataset
 from wekws.utils.checkpoint import load_checkpoint, save_checkpoint
@@ -106,6 +129,12 @@ def main():
         logging.info('training on multiple gpus, this gpu {}'.format(gpu))
         dist.init_process_group(backend=args.dist_backend)
 
+    wandb.init(
+            # set the wandb project where this run will be logged
+            project="wekws-project",
+            config = configs
+        )
+
     train_conf = configs['dataset_conf']
     cv_conf = copy.deepcopy(train_conf)
     cv_conf['speed_perturb'] = False
@@ -174,7 +203,7 @@ def main():
     if rank == 0:
         os.makedirs(model_dir, exist_ok=True)
         exp_id = os.path.basename(model_dir)
-        writer = SummaryWriter(os.path.join(args.tensorboard_dir, exp_id))
+        # writer = SummaryWriter(os.path.join(args.tensorboard_dir, exp_id))
 
     if world_size > 1:
         assert (torch.cuda.is_available())
@@ -211,12 +240,10 @@ def main():
         training_config['epoch'] = epoch
         lr = optimizer.param_groups[0]['lr']
         logging.info('Epoch {} TRAIN info lr {}'.format(epoch, lr))
-        executor.train(model, optimizer, train_data_loader, device, writer,
-                       training_config)
-        cv_loss, cv_acc = executor.cv(model, cv_data_loader, device,
-                                      training_config)
-        logging.info('Epoch {} CV info cv_loss {} cv_acc {}'.format(
-            epoch, cv_loss, cv_acc))
+        executor.train(model, optimizer, train_data_loader, device, writer, training_config, wandb.log)
+        cv_loss, cv_acc = executor.cv(model, cv_data_loader, device, training_config, wandb.log)
+        logging.info('Epoch {} CV info cv_loss {} cv_acc {}'.format(epoch, cv_loss, cv_acc))
+        wandb.log({'Epoch': epoch, 'epoch_lr':lr, 'epoch_loss':cv_loss, 'epoch__acc':cv_acc })
 
         if rank == 0:
             save_model_path = os.path.join(model_dir, '{}.pt'.format(epoch))
@@ -225,17 +252,20 @@ def main():
                 'lr': lr,
                 'cv_loss': cv_loss,
             })
-            writer.add_scalar('epoch/cv_loss', cv_loss, epoch)
-            writer.add_scalar('epoch/cv_acc', cv_acc, epoch)
-            writer.add_scalar('epoch/lr', lr, epoch)
+            # writer.add_scalar('epoch/cv_loss', cv_loss, epoch)
+            # writer.add_scalar('epoch/cv_acc', cv_acc, epoch)
+            # writer.add_scalar('epoch/lr', lr, epoch)
+            # wandb.save(save_model_path)
         final_epoch = epoch
         scheduler.step(cv_loss)
 
     if final_epoch is not None and rank == 0:
         final_model_path = os.path.join(model_dir, 'final.pt')
         os.symlink('{}.pt'.format(final_epoch), final_model_path)
-        writer.close()
+        # writer.close()
+        wandb.save(final_model_path)
 
+    wandb.finish()
 
 if __name__ == '__main__':
     main()

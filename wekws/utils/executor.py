@@ -24,7 +24,7 @@ class Executor:
     def __init__(self):
         self.step = 0
 
-    def train(self, model, optimizer, data_loader, device, writer, args):
+    def train(self, model, optimizer, data_loader, device, writer, args, wandb_log):
         ''' Train one epoch
         '''
         model.train()
@@ -32,6 +32,7 @@ class Executor:
         log_interval = args.get('log_interval', 10)
         epoch = args.get('epoch', 0)
         min_duration = args.get('min_duration', 0)
+        # wandb_log( {'clip':clip, 'log_interval':log_interval, 'epoch':epoch, 'min_duration':min_duration} )
 
         for batch_idx, batch in enumerate(data_loader):
             key, feats, target, feats_lengths = batch
@@ -54,8 +55,10 @@ class Executor:
                 logging.debug(
                     'TRAIN Batch {}/{} loss {:.8f} acc {:.8f}'.format(
                         epoch, batch_idx, loss.item(), acc))
+            # wandb_log( {'train_poch':epoch, 'train_batch_idx':batch_idx, 'train_loss.item()':loss.item(), 'train_acc':acc } )
+            wandb_log( {'train_loss':loss.item(), 'train_acc':acc } )
 
-    def cv(self, model, data_loader, device, args):
+    def cv(self, model, data_loader, device, args, wandb_log):
         ''' Cross validation on
         '''
         model.eval()
@@ -86,6 +89,9 @@ class Executor:
                         'CV Batch {}/{} loss {:.8f} acc {:.8f} history loss {:.8f}'
                         .format(epoch, batch_idx, loss.item(), acc,
                                 total_loss / num_seen_utts))
+                # wandb_log( {'cv_epoch':epoch, 'cv_batch_idx':batch_idx, 'cv_loss.item()':loss.item(), 'cv_acc':acc } )
+                wandb_log( {'cv_loss':loss.item(), 'cv_acc':acc } )
+
         return total_loss / num_seen_utts, total_acc / num_seen_utts
 
     def test(self, model, data_loader, device, args):

@@ -3,22 +3,24 @@
 
 . ./path.sh
 
-stage=0
-stop_stage=4
+stage=2
+stop_stage=2
 num_keywords=2
 
-config=conf/ds_tcn.yaml
+config=conf/mdtc.yaml
 norm_mean=true
 norm_var=true
-gpus="0,1"
+# gpus="0,1"
+gpus="0"
 
 checkpoint=
-dir=exp/ds_tcn
+dir=exp/mdtc
+# mdtc
 
-num_average=30
+num_average=5
 score_checkpoint=$dir/avg_${num_average}.pt
 
-download_dir=./data/local # your data dir
+download_dir=/data/user/dwwang/workspace/dataset/KWS # your data dir
 
 . tools/parse_options.sh || exit 1;
 window_shift=50
@@ -72,18 +74,44 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
   $norm_mean && cmvn_opts="--cmvn_file data/train/global_cmvn"
   $norm_var && cmvn_opts="$cmvn_opts --norm_var"
   num_gpus=$(echo $gpus | awk -F ',' '{print NF}')
-  torchrun --standalone --nnodes=1 --nproc_per_node=$num_gpus \
+
+  # python wekws/bin/train.py --gpus $gpus \
+  #     --config $config \
+  #     --train_data data/train/data.list \
+  #     --cv_data data/dev/data.list \
+  #     --model_dir $dir \
+  #     --num_workers 8 \
+  #     --num_keywords $num_keywords \
+  #     --min_duration 50 \
+  #     --seed 666 \
+  #     $cmvn_opts \
+  #     ${checkpoint:+--checkpoint $checkpoint}
+
+  python -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node=$num_gpus \
     wekws/bin/train.py --gpus $gpus \
       --config $config \
       --train_data data/train/data.list \
       --cv_data data/dev/data.list \
       --model_dir $dir \
-      --num_workers 8 \
+      --num_workers 2 \
       --num_keywords $num_keywords \
       --min_duration 50 \
       --seed 666 \
       $cmvn_opts \
       ${checkpoint:+--checkpoint $checkpoint}
+
+  # torchrun --standalone --nnodes=1 --nproc_per_node=$num_gpus \
+  #   wekws/bin/train.py --gpus $gpus \
+  #     --config $config \
+  #     --train_data data/train/data.list \
+  #     --cv_data data/dev/data.list \
+  #     --model_dir $dir \
+  #     --num_workers 8 \
+  #     --num_keywords $num_keywords \
+  #     --min_duration 50 \
+  #     --seed 666 \
+  #     $cmvn_opts \
+  #     ${checkpoint:+--checkpoint $checkpoint}
 fi
 
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
