@@ -23,30 +23,11 @@ import torch
 import torch.distributed as dist
 import torch.optim as optim
 import yaml
-# from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
+import datetime
 import wandb
 wandb.login(key='4ec0396ddf4a239b6fcb4daa9e15710b5cf963cd')
-# [optional] finish the wandb run, necessary in notebooks
-# start a new wandb run to track this script
-# wandb.init(
-#         # set the wandb project where this run will be logged
-#         project="wekws-project",
-#         config = {
-#         'num_workers': 2,
-#         'batch_size': 48,
-#         'input_size': 64,
-#         'num_epochs': 1,
-#         'learning_rate': 0.0008,   # originally 0.001
-#         'weight_decay': 1e-4,      # originally 1e-4
-#         'augment': False,
-#         'load_pretrained': True,
-#         'lr_scheduler_step_size': 30, 
-#         'lr_scheduler_gamma': 0.1,
-#         'train_mode': 'Quant', # "float" "floatClamp" "Quant" 
-#         }
-#     )
 # wandb = None
 
 from wekws.dataset.dataset import Dataset
@@ -121,18 +102,11 @@ def main():
     with open(args.config, 'r') as fin:
         configs = yaml.load(fin, Loader=yaml.FullLoader)
 
-    rank = int(os.environ['LOCAL_RANK'])
-    world_size = int(os.environ['WORLD_SIZE'])
-    gpu = int(args.gpus.split(',')[rank])
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu)
-    if world_size > 1:
-        logging.info('training on multiple gpus, this gpu {}'.format(gpu))
-        dist.init_process_group(backend=args.dist_backend)
-
     wandb.init(
             # set the wandb project where this run will be logged
             project="wekws-project",
-            config = configs
+            config = configs,
+            name = datetime.datetime.now().strftime('%F %T')
         )
 
     train_conf = configs['dataset_conf']
@@ -169,11 +143,11 @@ def main():
         configs['model']['cmvn'] = {}
         configs['model']['cmvn']['norm_var'] = args.norm_var
         configs['model']['cmvn']['cmvn_file'] = args.cmvn_file
-    if rank == 0:
-        saved_config_path = os.path.join(args.model_dir, 'config.yaml')
-        with open(saved_config_path, 'w') as fout:
-            data = yaml.dump(configs)
-            fout.write(data)
+
+    saved_config_path = os.path.join(args.model_dir, 'config.yaml')
+    with open(saved_config_path, 'w') as fout:
+        data = yaml.dump(configs)
+        fout.write(data)
 
     # Init asr model from configs
     model = init_model(configs['model'])
@@ -181,13 +155,10 @@ def main():
     num_params = count_parameters(model)
     print('the number of model params: {}'.format(num_params))
 
-    # !!!IMPORTANT!!!
-    # Try to export the model by script, if fails, we should refine
-    # the code to satisfy the script export requirements
-    if rank == 0:
-        script_model = torch.jit.script(model)
-        script_model.save(os.path.join(args.model_dir, 'init.zip'))
+    script_model = torch.jit.script(model)
+    script_model.save(os.path.join(args.model_dir, 'init.zip'))
     executor = Executor()
+
     # If specify checkpoint, load some info from checkpoint
     if args.checkpoint is not None:
         infos = load_checkpoint(model, args.checkpoint)
@@ -200,21 +171,13 @@ def main():
     configs['optim_conf']['lr'] = lr_last_epoch
     model_dir = args.model_dir
     writer = None
-    if rank == 0:
-        os.makedirs(model_dir, exist_ok=True)
-        exp_id = os.path.basename(model_dir)
-        # writer = SummaryWriter(os.path.join(args.tensorboard_dir, exp_id))
 
-    if world_size > 1:
-        assert (torch.cuda.is_available())
-        # cuda model is required for nn.parallel.DistributedDataParallel
-        model.cuda()
-        model = torch.nn.parallel.DistributedDataParallel(model)
-        device = torch.device("cuda")
-    else:
-        use_cuda = gpu >= 0 and torch.cuda.is_available()
-        device = torch.device('cuda' if use_cuda else 'cpu')
-        model = model.to(device)
+    os.makedirs(model_dir, exist_ok=True)
+    exp_id = os.path.basename(model_dir)
+
+    use_cuda = torch.cuda.is_available()
+    device = torch.device('cuda' if use_cuda else 'cpu')
+    model = model.to(device)
 
     optimizer = optim.Adam(model.parameters(), **configs['optim_conf'])
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -230,7 +193,7 @@ def main():
     training_config['min_duration'] = args.min_duration
     num_epochs = training_config.get('max_epoch', 100)
     final_epoch = None
-    if start_epoch == 0 and rank == 0:
+    if start_epoch == 0:
         save_model_path = os.path.join(model_dir, 'init.pt')
         save_checkpoint(model, save_model_path)
 
@@ -240,26 +203,25 @@ def main():
         training_config['epoch'] = epoch
         lr = optimizer.param_groups[0]['lr']
         logging.info('Epoch {} TRAIN info lr {}'.format(epoch, lr))
-        executor.train(model, optimizer, train_data_loader, device, writer, training_config, wandb.log)
-        cv_loss, cv_acc = executor.cv(model, cv_data_loader, device, training_config, wandb.log)
+        train_loss_list, train_acc_list = executor.train(model, optimizer, train_data_loader, device, writer, training_config, wandb.log)
+        cv_loss, cv_acc, cv_loss_list, cv_acc_list  = executor.cv(model, cv_data_loader, device, training_config, wandb.log)
         logging.info('Epoch {} CV info cv_loss {} cv_acc {}'.format(epoch, cv_loss, cv_acc))
-        wandb.log({'Epoch': epoch, 'epoch_lr':lr, 'epoch_loss':cv_loss, 'epoch__acc':cv_acc })
+        wandb.log({'Epoch': epoch, 'epoch_lr':lr, 'epoch_loss':cv_loss, 'epoch__acc':cv_acc }, commit=False)
+        wandb.log({'train_loss': train_loss_list, 'train_acc':train_acc_list, 'cv_loss':cv_loss_list, 'cv_acc':cv_acc_list }, commit=True)
 
-        if rank == 0:
-            save_model_path = os.path.join(model_dir, '{}.pt'.format(epoch))
-            save_checkpoint(model, save_model_path, {
-                'epoch': epoch,
-                'lr': lr,
-                'cv_loss': cv_loss,
-            })
-            # writer.add_scalar('epoch/cv_loss', cv_loss, epoch)
-            # writer.add_scalar('epoch/cv_acc', cv_acc, epoch)
-            # writer.add_scalar('epoch/lr', lr, epoch)
-            # wandb.save(save_model_path)
+
+        save_model_path = os.path.join(model_dir, '{}.pt'.format(epoch))
+        save_checkpoint(model, save_model_path, {
+            'epoch': epoch,
+            'lr': lr,
+            'cv_loss': cv_loss,
+        })
+        # wandb.save(save_model_path)
+        
         final_epoch = epoch
         scheduler.step(cv_loss)
 
-    if final_epoch is not None and rank == 0:
+    if final_epoch is not None:
         final_model_path = os.path.join(model_dir, 'final.pt')
         os.symlink('{}.pt'.format(final_epoch), final_model_path)
         # writer.close()

@@ -34,6 +34,9 @@ class Executor:
         min_duration = args.get('min_duration', 0)
         # wandb_log( {'clip':clip, 'log_interval':log_interval, 'epoch':epoch, 'min_duration':min_duration} )
 
+        train_loss_list = []
+        train_acc_list  = []
+
         for batch_idx, batch in enumerate(data_loader):
             key, feats, target, feats_lengths = batch
             feats = feats.to(device)
@@ -55,8 +58,11 @@ class Executor:
                 logging.debug(
                     'TRAIN Batch {}/{} loss {:.8f} acc {:.8f}'.format(
                         epoch, batch_idx, loss.item(), acc))
+            train_loss_list.append(loss.item())
+            train_acc_list.append(acc)
             # wandb_log( {'train_poch':epoch, 'train_batch_idx':batch_idx, 'train_loss.item()':loss.item(), 'train_acc':acc } )
-            wandb_log( {'train_loss':loss.item(), 'train_acc':acc } )
+            # wandb_log( {'train_loss':loss.item(), 'train_acc':acc } )
+        return train_loss_list, train_acc_list
 
     def cv(self, model, data_loader, device, args, wandb_log):
         ''' Cross validation on
@@ -68,6 +74,10 @@ class Executor:
         num_seen_utts = 1
         total_loss = 0.0
         total_acc = 0.0
+
+        cv_loss_list = []
+        cv_acc_list  = [] 
+
         with torch.no_grad():
             for batch_idx, batch in enumerate(data_loader):
                 key, feats, target, feats_lengths = batch
@@ -90,9 +100,11 @@ class Executor:
                         .format(epoch, batch_idx, loss.item(), acc,
                                 total_loss / num_seen_utts))
                 # wandb_log( {'cv_epoch':epoch, 'cv_batch_idx':batch_idx, 'cv_loss.item()':loss.item(), 'cv_acc':acc } )
-                wandb_log( {'cv_loss':loss.item(), 'cv_acc':acc } )
+                cv_loss_list.append(loss.item())
+                cv_acc_list.append(acc)
+                # wandb_log( {'cv_loss':loss.item(), 'cv_acc':acc } )
 
-        return total_loss / num_seen_utts, total_acc / num_seen_utts
+        return total_loss / num_seen_utts, total_acc / num_seen_utts, cv_loss_list, cv_acc_list
 
     def test(self, model, data_loader, device, args):
         return self.cv(model, data_loader, device, args)

@@ -75,20 +75,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
   $norm_var && cmvn_opts="$cmvn_opts --norm_var"
   num_gpus=$(echo $gpus | awk -F ',' '{print NF}')
 
-  # python wekws/bin/train.py --gpus $gpus \
-  #     --config $config \
-  #     --train_data data/train/data.list \
-  #     --cv_data data/dev/data.list \
-  #     --model_dir $dir \
-  #     --num_workers 8 \
-  #     --num_keywords $num_keywords \
-  #     --min_duration 50 \
-  #     --seed 666 \
-  #     $cmvn_opts \
-  #     ${checkpoint:+--checkpoint $checkpoint}
-
-  python -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node=$num_gpus \
-    wekws/bin/train.py --gpus $gpus \
+  python wekws/bin/train.py  \
       --config $config \
       --train_data data/train/data.list \
       --cv_data data/dev/data.list \
@@ -99,6 +86,19 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
       --seed 666 \
       $cmvn_opts \
       ${checkpoint:+--checkpoint $checkpoint}
+
+  # python -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node=$num_gpus \
+  #   wekws/bin/train.py --gpus $gpus \
+  #     --config $config \
+  #     --train_data data/train/data.list \
+  #     --cv_data data/dev/data.list \
+  #     --model_dir $dir \
+  #     --num_workers 2 \
+  #     --num_keywords $num_keywords \
+  #     --min_duration 50 \
+  #     --seed 666 \
+  #     $cmvn_opts \
+  #     ${checkpoint:+--checkpoint $checkpoint}
 
   # torchrun --standalone --nnodes=1 --nproc_per_node=$num_gpus \
   #   wekws/bin/train.py --gpus $gpus \

@@ -89,7 +89,7 @@ def init_model(configs):
     else:
         global_cmvn = None
 
-    input_dim = configs['input_dim']
+    input_dim  = configs['input_dim']
     output_dim = configs['output_dim']
     hidden_dim = configs['hidden_dim']
 
